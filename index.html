@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wiki com OCR na Nuvem</title>
+
+  <!-- CDNs: Tesseract.js para OCR e Supabase para Nuvem -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: var(--bg-color); color: var(--text); padding: 20px; line-height: 1.5; }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    header { text-align: center; margin-bottom: 30px; }
+    header h1 { font-size: 2.2rem; margin-bottom: 5px; color: #a5b4fc; }
+
+    .app-layout { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+    @media (max-width: 850px) { .app-layout { grid-template-columns: 1fr; } }
+
+    .form-card, .wiki-card, .filter-card {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .form-group { margin-bottom: 15px; }
+    label { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 5px; color: var(--text-muted); }
+    input, select, textarea {
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background-color: #0f172a;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    textarea { resize: vertical; min-height: 80px; }
+
+    .image-preview {
+      width: 100%;
+      max-height: 200px;
+      object-fit: contain;
+      margin-top: 10px;
+      border-radius: 6px;
+      display: none;
+      border: 1px dashed var(--border);
+    }
+
+    .status-msg {
+      font-size: 0.85rem;
+      margin-top: 5px;
+      color: #38bdf8;
+      font-weight: bold;
+      min-height: 20px;
+    }
+
+    button {
+      background-color: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      width: 100%;
+      transition: background 0.2s;
+    }
+    button:hover { background-color: var(--accent-hover); }
+    button.btn-clear { background-color: transparent; border: 1px solid var(--border); margin-top: 8px; }
+    button.btn-clear:hover { background-color: #334155; }
+
+    .filter-card { margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; }
+    .filter-card input, .filter-card select { flex: 1; min-width: 150px; }
+
+    .wiki-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+    .wiki-card { display: flex; flex-direction: column; justify-content: space-between; }
+    .wiki-card img { width: 100%; height: 180px; object-fit: cover; border-radius: 8px; margin-bottom: 12px; }
+    .wiki-card .tag {
+      display: inline-block;
+      background: #312e81;
+      color: #c7d2fe;
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      width: fit-content;
+    }
+    .wiki-card h3 { font-size: 1.2rem; margin-bottom: 6px; }
+    .wiki-card p { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 10px; }
+    .wiki-card .extra-text {
+      background: #0f172a;
+      padding: 8px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      margin-bottom: 12px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .card-actions { display: flex; gap: 8px; }
+    .btn-edit { background-color: #0284c7; }
+    .btn-edit:hover { background-color: #0369a1; }
+    .btn-delete { background-color: var(--danger); }
+    .btn-delete:hover { background-color: #dc2626; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>🌐 Wiki Global com OCR (Nuvem)</h1>
+      <p>Dados e imagens salvos em nuvem para todos os dispositivos</p>
+    </header>
+
+    <div class="app-layout">
+      <aside class="form-card">
+        <h2 id="formTitle">➕ Novo Item</h2>
+        <form id="wikiForm">
+          <input type="hidden" id="itemId">
+
+          <div class="form-group">
+            <label>Imagem do Item</label>
+            <input type="file" id="imageInput" accept="image/*">
+            <img id="imagePreview" class="image-preview" alt="Pré-visualização">
+            <div id="statusMsg" class="status-msg"></div>
+          </div>
+
+          <div class="form-group">
+            <label>Nome do Item</label>
+            <input type="text" id="itemTitle" placeholder="Ex: Espada de Fogo" required>
+          </div>
+
+          <div class="form-group">
+            <label>Categoria</label>
+            <select id="itemCategory">
+              <option value="Armas">Armas</option>
+              <option value="Armaduras">Armaduras</option>
+              <option value="Poções">Poções</option>
+              <option value="Acessórios">Acessórios</option>
+              <option value="Outros">Outros</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Descrição</label>
+            <textarea id="itemDescription" placeholder="Descrição detalhada do item..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Texto Extraído / Atributos (OCR)</label>
+            <textarea id="itemExtraText" placeholder="O texto lido da imagem aparecerá aqui..."></textarea>
+          </div>
+
+          <button type="submit" id="saveBtn">Salvar na Nuvem</button>
+          <button type="button" class="btn-clear" onclick="resetForm()">Cancelar / Limpar</button>
+        </form>
+      </aside>
+
+      <main>
+        <div class="filter-card">
+          <input type="text" id="searchInput" placeholder="🔍 Buscar por nome ou texto..." oninput="renderItems()">
+          <select id="categoryFilter" onchange="renderItems()">
+            <option value="ALL">Todas as Categorias</option>
+            <option value="Armas">Armas</option>
+            <option value="Armaduras">Armaduras</option>
+            <option value="Poções">Poções</option>
+            <option value="Acessórios">Acessórios</option>
+            <option value="Outros">Outros</option>
+          </select>
+        </div>
+
+        <div id="wikiGrid" class="wiki-grid"></div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    // ------------------------------------------------------------------
+    // CONFIGURAÇÃO DO SUPABASE (Substitua pelos seus dados)
+    // ------------------------------------------------------------------
+    const SUPABASE_URL = 'https://SUA_URL_AQUI.supabase.co';
+    const SUPABASE_KEY = 'SUA_CHAVE_ANON_PUBLIC_AQUI';
+    const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    let itemsList = [];
+    let selectedFile = null;
+    let currentImageUrl = '';
+
+    const imageInput = document.getElementById('imageInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const statusMsg = document.getElementById('statusMsg');
+    const wikiForm = document.getElementById('wikiForm');
+    const wikiGrid = document.getElementById('wikiGrid');
+
+    // 1. Upload de Imagem + Processamento de OCR
+    imageInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      selectedFile = file;
+      imagePreview.src = URL.createObjectURL(file);
+      imagePreview.style.display = 'block';
+
+      statusMsg.textContent = '🔍 Lendo texto da imagem (OCR)...';
+
+      try {
+        const worker = await Tesseract.createWorker('por');
+        const ret = await worker.recognize(file);
+        await worker.terminate();
+
+        const extractedText = ret.data.text.trim();
+        statusMsg.textContent = '✅ OCR concluído!';
+
+        if (extractedText) {
+          document.getElementById('itemExtraText').value = extractedText;
+          const lines = extractedText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+          if (lines.length > 0 && !document.getElementById('itemTitle').value) {
+            document.getElementById('itemTitle').value = lines[0];
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        statusMsg.textContent = '❌ Erro ao processar o OCR.';
+      }
+    });
+
+    // 2. Enviar arquivo para o Supabase Storage
+    async function uploadImageToStorage(file) {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `wiki-items/${fileName}`;
+
+      const { data, error } = await _supabase.storage
+        .from('wiki-images')
+        .upload(filePath, file);
+
+      if (error) throw error;
+
+      const { data: publicUrlData } = _supabase.storage
+        .from('wiki-images')
+        .getPublicUrl(filePath);
+
+      return publicUrlData.publicUrl;
+    }
+
+    // 3. Salvar/Editar Item no Banco de Dados
+    wikiForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const id = document.getElementById('itemId').value;
+      const title = document.getElementById('itemTitle').value;
+      const category = document.getElementById('itemCategory').value;
+      const description = document.getElementById('itemDescription').value;
+      const extraText = document.getElementById('itemExtraText').value;
+
+      statusMsg.textContent = '⏳ Salvando dados na nuvem...';
+
+      try {
+        let imageUrl = currentImageUrl;
+
+        if (selectedFile) {
+          imageUrl = await uploadImageToStorage(selectedFile);
+        }
+
+        if (!imageUrl) {
+          imageUrl = 'https://via.placeholder.com/300x200?text=Sem+Imagem';
+        }
+
+        const payload = {
+          title,
+          category,
+          description,
+          extra_text: extraText,
+          image_url: imageUrl
+        };
+
+        if (id) {
+          const { error } = await _supabase
+            .from('wiki_items')
+            .update(payload)
+            .eq('id', id);
+          if (error) throw error;
+        } else {
+          const { error } = await _supabase
+            .from('wiki_items')
+            .insert([payload]);
+          if (error) throw error;
+        }
+
+        statusMsg.textContent = '✅ Salvo com sucesso!';
+        resetForm();
+        fetchItems();
+      } catch (err) {
+        console.error(err);
+        statusMsg.textContent = '❌ Erro ao salvar na nuvem.';
+      }
+    });
+
+    // 4. Buscar Itens do Banco de Dados
+    async function fetchItems() {
+      try {
+        const { data, error } = await _supabase
+          .from('wiki_items')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        itemsList = data || [];
+        renderItems();
+      } catch (err) {
+        console.error('Erro ao carregar dados:', err);
+      }
+    }
+
+    // 5. Renderizar cards na tela
+    function renderItems() {
+      const search = document.getElementById('searchInput').value.toLowerCase();
+      const category = document.getElementById('categoryFilter').value;
+
+      wikiGrid.innerHTML = '';
+
+      const filtered = itemsList.filter(item => {
+        const matchesSearch = (item.title || '').toLowerCase().includes(search) ||
+                              (item.extra_text || '').toLowerCase().includes(search) ||
+                              (item.description || '').toLowerCase().includes(search);
+        const matchesCategory = category === 'ALL' || item.category === category;
+        return matchesSearch && matchesCategory;
+      });
+
+      if (filtered.length === 0) {
+        wikiGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">Nenhum item encontrado.</p>';
+        return;
+      }
+
+      filtered.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'wiki-card';
+        card.innerHTML = `
+          <div>
+            <img src="${item.image_url}" alt="${item.title}">
+            <span class="tag">${item.category}</span>
+            <h3>${item.title}</h3>
+            ${item.description ? `<p>${item.description}</p>` : ''}
+            ${item.extra_text ? `<div class="extra-text">${escapeHtml(item.extra_text)}</div>` : ''}
+          </div>
+          <div class="card-actions">
+            <button class="btn-edit" onclick="editItem('${item.id}')">Editar</button>
+            <button class="btn-delete" onclick="deleteItem('${item.id}')">Excluir</button>
+          </div>
+        `;
+        wikiGrid.appendChild(card);
+      });
+    }
+
+    // 6. Editar e Excluir
+    function editItem(id) {
+      const item = itemsList.find(i => i.id == id);
+      if (!item) return;
+
+      document.getElementById('itemId').value = item.id;
+      document.getElementById('itemTitle').value = item.title;
+      document.getElementById('itemCategory').value = item.category;
+      document.getElementById('itemDescription').value = item.description || '';
+      document.getElementById('itemExtraText').value = item.extra_text || '';
+      
+      currentImageUrl = item.image_url;
+      imagePreview.src = item.image_url;
+      imagePreview.style.display = 'block';
+
+      document.getElementById('formTitle').textContent = '✏️ Editar Item';
+      document.getElementById('saveBtn').textContent = 'Atualizar na Nuvem';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function deleteItem(id) {
+      if (confirm('Tem certeza que deseja excluir este item?')) {
+        const { error } = await _supabase
+          .from('wiki_items')
+          .delete()
+          .eq('id', id);
+
+        if (!error) {
+          fetchItems();
+        } else {
+          alert('Erro ao excluir item.');
+        }
+      }
+    }
+
+    function resetForm() {
+      wikiForm.reset();
+      document.getElementById('itemId').value = '';
+      selectedFile = null;
+      currentImageUrl = '';
+      imagePreview.style.display = 'none';
+      statusMsg.textContent = '';
+      document.getElementById('formTitle').textContent = '➕ Novo Item';
+      document.getElementById('saveBtn').textContent = 'Salvar na Nuvem';
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    // Inicializa carregando os dados do banco
+    fetchItems();
+  </script>
+</body>
+</html>
